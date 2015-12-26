@@ -2,21 +2,150 @@
 title: "Practical Machine Learning Project"
 author: "Reed Davis"
 date: "December 25, 2015"
-output: html_document
+output: 
+  html_document: 
+    keep_md: yes
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This report is for the Coursera Practical Machine Learning Project. Following are the project instructions:
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Project Instructions
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### Data
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+### What you should submit
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details. 
+
+## Loading the data
+
+The following code downloads the training and testing data from the internet and writes it to csv files in the files subdirectory. An inspection of the data reveals that it contains the string "DIV/0!" for some values, likely from an attempted division by zero. Along with "NA", these values are treated as missing. The code then reads the files into memory and displays their dimensions.
 
 ```{r}
-summary(cars)
+getFile <- function(fileUrl, fileName, fileDir = "."){
+    if (!file.exists(fileDir)){
+        dir.create(fileDir, recursive = TRUE)
+    }
+    filePath <- paste(fileDir, fileName, sep="\\")
+    if (!file.exists(filePath)){
+        download.file(fileUrl, destfile = filePath, method = "libcurl")
+    }
+}
+trainingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+getFile(trainingUrl, "training.csv", ".\\files")
+getFile(testingUrl,  "testing.csv",  ".\\files")
+training <- read.csv(".\\files\\training.csv", na.strings = c("NA", "#DIV/0!"))
+testing  <- read.csv(".\\files\\testing.csv",  na.strings = c("NA", "#DIV/0!"))
+print(dim(training))
+print(dim(testing))
 ```
 
-You can also embed plots, for example:
+## Cleaning the data
 
-```{r, echo=FALSE}
-plot(cars)
+The following code cleans the data by removing the 7 non-sensor columns, removing columns with near zero variance, and removing columns with many NAs (missing values). This leaves the 53 columns whose name, type, and first several values are output by the str command.
+
+### Remove the first 7 non-sensor columns
+
+```{r}
+# Remove first 7 non-sensor columns
+dd_sensor <- training[,8:ncol(training)]
+print(paste(length(dd_sensor), "= sensors only"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Remove columns with near zero variance
+
+```{r}
+library(caret)
+ii_nzv <- nearZeroVar(dd_sensor, saveMetrics = FALSE)
+dd_nzv <- dd_sensor[,-ii_nzv]
+print(paste(length(dd_nzv), "= after removing nzv"))
+```
+
+### Remove columns with many NAs
+
+```{r}
+ii_nas <- which(colSums(is.na(dd_nzv)) > 19000)
+dd <- dd_nzv[,-ii_nas]
+print(paste(length(dd), " = after removing columns with many NAs"))
+```
+
+### Display remaining columns
+
+```{r}
+str(dd)
+```
+## Partitioning the Data
+
+The following code partitions the original training data into a secondary training and testing set so that it can be cross-validated and the out-of-sample error can be estimated. The partitioning is 70 percent for the training data and 30 percent for the testing data. The code also sets the seed to 123 so that the results will be reproducible.
+
+```{r}
+set.seed(123)
+inTrain <- createDataPartition(dd$classe, p = 0.7, list = FALSE)
+myTraining <- dd[inTrain,]
+myTesting  <- dd[-inTrain,]
+```
+
+## Create a Model with Random Forest
+
+### Train a prediction model with secondary training data
+
+The following code uses Random Forest to train a prediction model on the secondary training set, uses the model to make predictions on the secondary testing set, and uses the results to estimate the out-of-sample error.
+```{r}
+#install.packages("randomForest")
+library(randomForest)
+print(myModFit <- randomForest(classe ~., data = myTraining))
+```
+
+### Apply model to secondary testing data
+
+```{r}
+myPred <- predict(myModFit, myTesting)
+print(table(myPred, myTesting$classe))
+```
+
+### Estimate out-of-sample error
+
+```{r}
+myOutOfSampleError <- 100 - (100 * sum(myPred==myTesting$classe) / length(myPred))
+print(paste("outOfSampleError =", myOutOfSampleError, "percent"))
+```
+## Apply model to primary testing data
+
+The following code uses the prediction model to make predictions on the original testing data of 20 samples and outputs the result.
+
+```{r}
+pred <- predict(myModFit, testing)
+print(pred)
+```
+## Write Predictions to Submission Files
+
+The following code takes the 20 prediction results and creates 20 files, one for each result, to be submitted to Coursera.
+
+```{r}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+pml_write_files(pred)
+```
